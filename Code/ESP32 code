@@ -1,0 +1,1844 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ESP32Servo.h>
+
+// =====================================================
+// MRV-46 ROBOT
+// =====================================================
+
+// ================= WIFI =================
+const char* AP_SSID     = "MRV-46";
+const char* AP_PASSWORD = "12345678";
+
+WebServer server(80);
+
+// =====================================================
+// BTS7960 MOTOR PINS
+// =====================================================
+#define LEFT_RPWM   16
+#define LEFT_LPWM   17
+#define RIGHT_RPWM  18
+#define RIGHT_LPWM  19
+
+// =====================================================
+// SERVO PINS
+// =====================================================
+// Servo 2 = Gripper
+// Servo 3 = Elbow
+// Servo 4 = Shoulder
+
+#define GRIPPER_PIN   26
+#define ELBOW_PIN     32
+#define SHOULDER_PIN  33
+
+// =====================================================
+// RELAY PINS
+// =====================================================
+#define METAL_RELAY   13
+#define CAMERA_RELAY  14
+
+// =====================================================
+// SERVO LIMITS
+// =====================================================
+
+// Gripper
+#define GRIPPER_MIN 83
+#define GRIPPER_MAX 180
+
+// Elbow
+#define ELBOW_MIN 72
+#define ELBOW_MAX 180
+
+// Shoulder
+#define SHOULDER_MIN 0
+#define SHOULDER_MAX 130
+
+
+// =====================================================
+// SERVO OBJECTS
+// =====================================================
+
+Servo gripper;
+Servo elbow;
+Servo shoulder;
+
+
+// =====================================================
+// CURRENT SERVO POSITIONS
+// =====================================================
+
+int gripperAngle  = GRIPPER_MIN;
+int elbowAngle    = ELBOW_MIN;
+int shoulderAngle = SHOULDER_MIN;
+
+
+// =====================================================
+// TARGET SERVO POSITIONS
+// =====================================================
+
+int gripperTarget  = GRIPPER_MIN;
+int elbowTarget    = ELBOW_MIN;
+int shoulderTarget = SHOULDER_MIN;
+
+
+// =====================================================
+// SPEED
+// =====================================================
+
+int speedValue = 180;
+
+
+// =====================================================
+// MOTOR FUNCTIONS
+// =====================================================
+
+void Stop() {
+
+  analogWrite(LEFT_RPWM, 0);
+  analogWrite(LEFT_LPWM, 0);
+
+  analogWrite(RIGHT_RPWM, 0);
+  analogWrite(RIGHT_LPWM, 0);
+}
+
+
+void Forward() {
+
+  analogWrite(LEFT_RPWM, speedValue);
+  analogWrite(LEFT_LPWM, 0);
+
+  analogWrite(RIGHT_RPWM, speedValue);
+  analogWrite(RIGHT_LPWM, 0);
+}
+
+
+void Backward() {
+
+  analogWrite(LEFT_RPWM, 0);
+  analogWrite(LEFT_LPWM, speedValue);
+
+  analogWrite(RIGHT_RPWM, 0);
+  analogWrite(RIGHT_LPWM, speedValue);
+}
+
+
+void Left() {
+
+  analogWrite(LEFT_RPWM, 0);
+  analogWrite(LEFT_LPWM, speedValue);
+
+  analogWrite(RIGHT_RPWM, speedValue);
+  analogWrite(RIGHT_LPWM, 0);
+}
+
+
+void Right() {
+
+  analogWrite(LEFT_RPWM, speedValue);
+  analogWrite(LEFT_LPWM, 0);
+
+  analogWrite(RIGHT_RPWM, 0);
+  analogWrite(RIGHT_LPWM, speedValue);
+}
+
+
+// =====================================================
+// SMOOTH SERVO SYSTEM
+// =====================================================
+
+void updateServos() {
+
+  // ---------------- GRIPPER ----------------
+
+  if (gripperAngle < gripperTarget) {
+
+    gripperAngle++;
+
+    gripper.write(gripperAngle);
+  }
+
+  else if (gripperAngle > gripperTarget) {
+
+    gripperAngle--;
+
+    gripper.write(gripperAngle);
+  }
+
+
+  // ---------------- ELBOW ----------------
+
+  if (elbowAngle < elbowTarget) {
+
+    elbowAngle++;
+
+    elbow.write(elbowAngle);
+  }
+
+  else if (elbowAngle > elbowTarget) {
+
+    elbowAngle--;
+
+    elbow.write(elbowAngle);
+  }
+
+
+  // ---------------- SHOULDER ----------------
+
+  if (shoulderAngle < shoulderTarget) {
+
+    shoulderAngle++;
+
+    shoulder.write(shoulderAngle);
+  }
+
+  else if (shoulderAngle > shoulderTarget) {
+
+    shoulderAngle--;
+
+    shoulder.write(shoulderAngle);
+  }
+}
+
+
+// =====================================================
+// WEB UI
+// =====================================================
+
+const char MAIN_page[] PROGMEM = R"rawliteral(
+
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta name="viewport"
+content="width=device-width,
+initial-scale=1.0,
+maximum-scale=1.0,
+user-scalable=no">
+
+<title>MRV-46</title>
+
+
+<style>
+
+/* =====================================================
+   GLOBAL
+===================================================== */
+
+*{
+    box-sizing:border-box;
+    -webkit-tap-highlight-color:transparent;
+}
+
+body{
+
+    margin:0;
+
+    background:
+    radial-gradient(
+        circle at top,
+        #142b3a 0%,
+        #071017 45%,
+        #04090d 100%
+    );
+
+    color:#ffffff;
+
+    font-family:
+    Arial,
+    Helvetica,
+    sans-serif;
+
+    min-height:100vh;
+}
+
+
+/* =====================================================
+   HEADER
+===================================================== */
+
+.header{
+
+    text-align:center;
+
+    padding:
+    22px
+    15px
+    18px;
+
+    background:
+    rgba(8,20,29,.94);
+
+    border-bottom:
+    1px solid
+    #203747;
+
+    position:sticky;
+
+    top:0;
+
+    z-index:10;
+
+    backdrop-filter:blur(12px);
+}
+
+
+.robotIcon{
+
+    width:64px;
+    height:64px;
+
+    margin:auto;
+
+    border-radius:20px;
+
+    display:flex;
+
+    align-items:center;
+
+    justify-content:center;
+
+    background:
+    linear-gradient(
+        145deg,
+        #18c889,
+        #087d59
+    );
+
+    box-shadow:
+    0 0 35px
+    rgba(24,200,137,.28);
+}
+
+
+.robotIcon svg{
+
+    width:39px;
+    height:39px;
+}
+
+
+.robotName{
+
+    margin-top:10px;
+
+    font-size:27px;
+
+    font-weight:800;
+
+    letter-spacing:2px;
+}
+
+
+.robotSub{
+
+    margin-top:4px;
+
+    color:#76909f;
+
+    font-size:11px;
+
+    letter-spacing:2px;
+}
+
+
+.online{
+
+    margin-top:10px;
+
+    color:#36e79e;
+
+    font-size:12px;
+
+    font-weight:bold;
+}
+
+
+/* =====================================================
+   MAIN
+===================================================== */
+
+.container{
+
+    width:100%;
+
+    max-width:680px;
+
+    margin:auto;
+
+    padding:13px;
+}
+
+
+/* =====================================================
+   CARD
+===================================================== */
+
+.card{
+
+    background:
+    linear-gradient(
+        145deg,
+        rgba(17,34,46,.97),
+        rgba(9,22,31,.97)
+    );
+
+    border:
+    1px solid
+    #1d3747;
+
+    border-radius:22px;
+
+    padding:17px;
+
+    margin-bottom:14px;
+
+    box-shadow:
+    0 12px 30px
+    rgba(0,0,0,.25);
+}
+
+
+.cardTitle{
+
+    font-size:12px;
+
+    color:#7692a2;
+
+    letter-spacing:1.5px;
+
+    font-weight:bold;
+
+    margin-bottom:15px;
+}
+
+
+/* =====================================================
+   MOTOR CONTROL
+===================================================== */
+
+.control{
+
+    width:310px;
+
+    max-width:100%;
+
+    margin:auto;
+
+    display:grid;
+
+    grid-template-columns:
+    repeat(3,1fr);
+
+    gap:9px;
+}
+
+
+.motorBtn{
+
+    height:68px;
+
+    border:none;
+
+    border-radius:18px;
+
+    color:#ffffff;
+
+    background:#162c3c;
+
+    display:flex;
+
+    align-items:center;
+
+    justify-content:center;
+
+    box-shadow:
+    0 5px 0
+    #061018;
+
+    touch-action:none;
+
+    user-select:none;
+
+    transition:.08s;
+}
+
+
+.motorBtn:active{
+
+    transform:
+    translateY(5px);
+
+    box-shadow:none;
+}
+
+
+.forward{
+
+    background:
+    linear-gradient(
+        145deg,
+        #079d69,
+        #066c4c
+    );
+}
+
+
+.backward{
+
+    background:
+    linear-gradient(
+        145deg,
+        #a33e47,
+        #722d35
+    );
+}
+
+
+.leftRight{
+
+    background:
+    linear-gradient(
+        145deg,
+        #245a7d,
+        #183f5b
+    );
+}
+
+
+.stop{
+
+    background:
+    linear-gradient(
+        145deg,
+        #c89120,
+        #8e650f
+    );
+
+    font-size:13px;
+
+    font-weight:bold;
+
+    letter-spacing:1px;
+}
+
+
+.empty{
+
+    visibility:hidden;
+}
+
+
+.motorIcon{
+
+    width:30px;
+
+    height:30px;
+
+    fill:white;
+}
+
+
+/* =====================================================
+   SPEED
+===================================================== */
+
+.speedBox{
+
+    text-align:center;
+}
+
+
+.speedValue{
+
+    font-size:31px;
+
+    font-weight:800;
+
+    color:#35e19b;
+
+    margin-bottom:8px;
+}
+
+
+.speedRange{
+
+    width:100%;
+
+    height:7px;
+
+    accent-color:#20d28f;
+
+    cursor:pointer;
+}
+
+
+.speedLabels{
+
+    display:flex;
+
+    justify-content:space-between;
+
+    margin-top:6px;
+
+    color:#607989;
+
+    font-size:10px;
+}
+
+
+/* =====================================================
+   SERVO
+===================================================== */
+
+.servoCard{
+
+    background:
+    rgba(12,28,39,.9);
+
+    border:
+    1px solid
+    #1c3748;
+
+    border-radius:17px;
+
+    padding:15px;
+
+    margin-bottom:10px;
+}
+
+
+.servoTop{
+
+    display:flex;
+
+    justify-content:space-between;
+
+    align-items:center;
+}
+
+
+.servoName{
+
+    font-size:16px;
+
+    font-weight:bold;
+}
+
+
+.servoNumber{
+
+    color:#607b8b;
+
+    font-size:10px;
+
+    margin-top:3px;
+
+    letter-spacing:1px;
+}
+
+
+.angle{
+
+    min-width:68px;
+
+    text-align:right;
+
+    color:#39e5a0;
+
+    font-size:25px;
+
+    font-weight:800;
+}
+
+
+.rangeText{
+
+    color:#688291;
+
+    font-size:11px;
+
+    margin-top:8px;
+
+    margin-bottom:7px;
+}
+
+
+.servoRange{
+
+    width:100%;
+
+    height:7px;
+
+    accent-color:#25d493;
+}
+
+
+/* =====================================================
+   RELAY
+===================================================== */
+
+.relayGrid{
+
+    display:grid;
+
+    grid-template-columns:
+    1fr 1fr;
+
+    gap:10px;
+}
+
+
+.relayCard{
+
+    padding:14px;
+
+    border-radius:17px;
+
+    background:#0b1d29;
+
+    border:
+    1px solid
+    #1b3747;
+}
+
+
+.relayName{
+
+    font-size:13px;
+
+    font-weight:bold;
+
+    margin-bottom:10px;
+}
+
+
+.status{
+
+    display:flex;
+
+    align-items:center;
+
+    gap:7px;
+
+    font-size:12px;
+
+    font-weight:bold;
+}
+
+
+.dot{
+
+    width:10px;
+
+    height:10px;
+
+    border-radius:50%;
+
+    background:#e33b48;
+
+    box-shadow:
+    0 0 8px
+    rgba(227,59,72,.5);
+}
+
+
+.dot.on{
+
+    background:#2ee39a;
+
+    box-shadow:
+    0 0 10px
+    rgba(46,227,154,.65);
+}
+
+
+.relayBtn{
+
+    width:100%;
+
+    height:42px;
+
+    margin-top:11px;
+
+    border:none;
+
+    border-radius:12px;
+
+    color:white;
+
+    background:#18394b;
+
+    font-weight:bold;
+}
+
+
+/* =====================================================
+   FOOTER
+===================================================== */
+
+.footer{
+
+    text-align:center;
+
+    padding:
+    8px
+    5px
+    22px;
+
+    color:#4e6878;
+
+    font-size:10px;
+
+    letter-spacing:1px;
+}
+
+
+/* =====================================================
+   MOBILE
+===================================================== */
+
+@media(max-width:430px){
+
+    .robotName{
+        font-size:24px;
+    }
+
+    .control{
+        width:285px;
+    }
+
+    .motorBtn{
+        height:64px;
+    }
+
+    .relayGrid{
+        grid-template-columns:1fr;
+    }
+}
+
+</style>
+
+</head>
+
+
+<body>
+
+
+<!-- =====================================================
+     HEADER
+===================================================== -->
+
+<div class="header">
+
+<div class="robotIcon">
+
+<svg viewBox="0 0 64 64">
+
+<rect
+x="10"
+y="16"
+width="44"
+height="34"
+rx="10"
+fill="none"
+stroke="white"
+stroke-width="4"/>
+
+<circle
+cx="23"
+cy="32"
+r="4"
+fill="white"/>
+
+<circle
+cx="41"
+cy="32"
+r="4"
+fill="white"/>
+
+<path
+d="M22 42 Q32 48 42 42"
+fill="none"
+stroke="white"
+stroke-width="3"/>
+
+<path
+d="M32 16 V8"
+stroke="white"
+stroke-width="4"
+stroke-linecap="round"/>
+
+<circle
+cx="32"
+cy="7"
+r="3"
+fill="white"/>
+
+</svg>
+
+</div>
+
+
+<div class="robotName">
+MRV-46
+</div>
+
+<div class="robotSub">
+MULTI-ROLE VEHICLE
+</div>
+
+<div class="online">
+● SYSTEM ONLINE
+</div>
+
+</div>
+
+
+
+<div class="container">
+
+
+<!-- =====================================================
+     MOTOR
+===================================================== -->
+
+<div class="card">
+
+<div class="cardTitle">
+MOTION CONTROL
+</div>
+
+
+<div class="control">
+
+
+<div class="motorBtn empty"></div>
+
+
+<button
+class="motorBtn forward"
+onpointerdown="move('F')"
+onpointerup="stopRobot()"
+onpointercancel="stopRobot()">
+
+<svg class="motorIcon"
+viewBox="0 0 24 24">
+
+<path d="M12 3L4 11h5v10h6V11h5z"/>
+
+</svg>
+
+</button>
+
+
+<div class="motorBtn empty"></div>
+
+
+
+<button
+class="motorBtn leftRight"
+onpointerdown="move('L')"
+onpointerup="stopRobot()"
+onpointercancel="stopRobot()">
+
+<svg class="motorIcon"
+viewBox="0 0 24 24">
+
+<path d="M3 12l8-8v5h10v6H11v5z"/>
+
+</svg>
+
+</button>
+
+
+<button
+class="motorBtn stop"
+onclick="stopRobot()">
+
+STOP
+
+</button>
+
+
+<button
+class="motorBtn leftRight"
+onpointerdown="move('R')"
+onpointerup="stopRobot()"
+onpointercancel="stopRobot()">
+
+<svg class="motorIcon"
+viewBox="0 0 24 24">
+
+<path d="M21 12l-8-8v5H3v6h10v5z"/>
+
+</svg>
+
+</button>
+
+
+
+<div class="motorBtn empty"></div>
+
+
+<button
+class="motorBtn backward"
+onpointerdown="move('B')"
+onpointerup="stopRobot()"
+onpointercancel="stopRobot()">
+
+<svg
+class="motorIcon"
+viewBox="0 0 24 24"
+style="transform:rotate(180deg)">
+
+<path d="M12 3L4 11h5v10h6V11h5z"/>
+
+</svg>
+
+</button>
+
+
+<div class="motorBtn empty"></div>
+
+</div>
+
+</div>
+
+
+
+<!-- =====================================================
+     SPEED
+===================================================== -->
+
+<div class="card">
+
+<div class="cardTitle">
+MOTOR SPEED
+</div>
+
+
+<div class="speedBox">
+
+<div class="speedValue">
+
+<span id="speedValue">
+180
+</span>
+
+</div>
+
+
+<input
+class="speedRange"
+type="range"
+min="0"
+max="255"
+value="180"
+oninput="changeSpeed(this.value)">
+
+
+<div class="speedLabels">
+
+<span>0</span>
+<span>127</span>
+<span>255</span>
+
+</div>
+
+</div>
+
+</div>
+
+
+
+<!-- =====================================================
+     ARM / SERVO
+===================================================== -->
+
+<div class="card">
+
+<div class="cardTitle">
+ROBOT ARM POSITION
+</div>
+
+
+<!-- GRIPPER -->
+
+<div class="servoCard">
+
+<div class="servoTop">
+
+<div>
+
+<div class="servoName">
+Gripper
+</div>
+
+<div class="servoNumber">
+SERVO 2
+</div>
+
+</div>
+
+
+<div class="angle"
+id="angle1">
+83°
+</div>
+
+</div>
+
+
+<div class="rangeText">
+Range: 83° — 180°
+</div>
+
+
+<input
+class="servoRange"
+id="servo1"
+type="range"
+min="83"
+max="180"
+value="83"
+oninput="changeServo(1,this.value)">
+
+</div>
+
+
+
+<!-- ELBOW -->
+
+<div class="servoCard">
+
+<div class="servoTop">
+
+<div>
+
+<div class="servoName">
+Elbow
+</div>
+
+<div class="servoNumber">
+SERVO 3
+</div>
+
+</div>
+
+
+<div class="angle"
+id="angle2">
+72°
+</div>
+
+</div>
+
+
+<div class="rangeText">
+Range: 72° — 180°
+</div>
+
+
+<input
+class="servoRange"
+id="servo2"
+type="range"
+min="72"
+max="180"
+value="72"
+oninput="changeServo(2,this.value)">
+
+</div>
+
+
+
+<!-- SHOULDER -->
+
+<div class="servoCard">
+
+<div class="servoTop">
+
+<div>
+
+<div class="servoName">
+Shoulder
+</div>
+
+<div class="servoNumber">
+SERVO 4
+</div>
+
+</div>
+
+
+<div class="angle"
+id="angle3">
+0°
+</div>
+
+</div>
+
+
+<div class="rangeText">
+Range: 0° — 130°
+</div>
+
+
+<input
+class="servoRange"
+id="servo3"
+type="range"
+min="0"
+max="130"
+value="0"
+oninput="changeServo(3,this.value)">
+
+</div>
+
+</div>
+
+
+
+<!-- =====================================================
+     AUXILIARY
+===================================================== -->
+
+<div class="card">
+
+<div class="cardTitle">
+AUXILIARY SYSTEMS
+</div>
+
+
+<div class="relayGrid">
+
+
+<!-- METAL DETECTOR -->
+
+<div class="relayCard">
+
+<div class="relayName">
+Metal Detector
+</div>
+
+
+<div class="status">
+
+<span
+class="dot"
+id="metalDot">
+</span>
+
+<span
+id="metalText">
+OFF
+</span>
+
+</div>
+
+
+<button
+class="relayBtn"
+onclick="toggleRelay(1)">
+
+ON / OFF
+
+</button>
+
+</div>
+
+
+
+<!-- CAMERA -->
+
+<div class="relayCard">
+
+<div class="relayName">
+Camera
+</div>
+
+
+<div class="status">
+
+<span
+class="dot"
+id="cameraDot">
+</span>
+
+<span
+id="cameraText">
+OFF
+</span>
+
+</div>
+
+
+<button
+class="relayBtn"
+onclick="toggleRelay(2)">
+
+ON / OFF
+
+</button>
+
+</div>
+
+</div>
+
+</div>
+
+
+
+<div class="footer">
+
+MRV-46 • ESP32 ROBOT CONTROL
+
+</div>
+
+
+</div>
+
+
+
+<script>
+
+
+// =====================================================
+// SEND COMMAND
+// =====================================================
+
+function send(command){
+
+    fetch(
+        "/cmd?c=" +
+        encodeURIComponent(command)
+    )
+    .catch(()=>{});
+
+}
+
+
+// =====================================================
+// MOTOR
+// =====================================================
+
+function move(command){
+
+    send(command);
+}
+
+
+function stopRobot(){
+
+    send("S");
+}
+
+
+// =====================================================
+// SPEED
+// =====================================================
+
+function changeSpeed(value){
+
+    document.getElementById(
+        "speedValue"
+    ).innerText=value;
+
+    send(
+        "V"+value
+    );
+}
+
+
+// =====================================================
+// SERVO
+// =====================================================
+
+function changeServo(number,value){
+
+    let angleID =
+        "angle"+number;
+
+    document.getElementById(
+        angleID
+    ).innerText =
+        value+"°";
+
+
+    send(
+        "P"+number+"_"+value
+    );
+}
+
+
+// =====================================================
+// RELAY STATUS
+// =====================================================
+
+let metalState = false;
+
+let cameraState = false;
+
+
+function toggleRelay(number){
+
+    if(number === 1){
+
+        metalState =
+            !metalState;
+
+        send(
+            "M"+(metalState ? 1 : 0)
+        );
+
+        updateRelay(
+            "metalDot",
+            "metalText",
+            metalState
+        );
+    }
+
+
+    if(number === 2){
+
+        cameraState =
+            !cameraState;
+
+        send(
+            "C"+(cameraState ? 1 : 0)
+        );
+
+        updateRelay(
+            "cameraDot",
+            "cameraText",
+            cameraState
+        );
+    }
+}
+
+
+function updateRelay(
+    dotID,
+    textID,
+    state
+){
+
+    let dot =
+        document.getElementById(dotID);
+
+    let text =
+        document.getElementById(textID);
+
+
+    if(state){
+
+        dot.classList.add("on");
+
+        text.innerText="ON";
+
+    }else{
+
+        dot.classList.remove("on");
+
+        text.innerText="OFF";
+    }
+}
+
+
+</script>
+
+
+</body>
+
+</html>
+
+)rawliteral";
+
+
+// =====================================================
+// COMMAND HANDLER
+// =====================================================
+
+void handleCommand(){
+
+    if(!server.hasArg("c")){
+
+        server.send(
+            400,
+            "text/plain",
+            "NO COMMAND"
+        );
+
+        return;
+    }
+
+
+    String cmd =
+        server.arg("c");
+
+
+    // =================================================
+    // MOTOR
+    // =================================================
+
+    if(cmd == "F"){
+
+        Forward();
+    }
+
+    else if(cmd == "B"){
+
+        Backward();
+    }
+
+    else if(cmd == "L"){
+
+        Left();
+    }
+
+    else if(cmd == "R"){
+
+        Right();
+    }
+
+    else if(cmd == "S"){
+
+        Stop();
+    }
+
+
+    // =================================================
+    // SPEED
+    // =================================================
+
+    else if(cmd.startsWith("V")){
+
+        speedValue =
+            cmd.substring(1).toInt();
+
+        speedValue =
+            constrain(
+                speedValue,
+                0,
+                255
+            );
+    }
+
+
+    // =================================================
+    // SERVO
+    // =================================================
+
+    else if(cmd.startsWith("P")){
+
+        int separator =
+            cmd.indexOf('_');
+
+
+        int servoNumber =
+            cmd.substring(
+                1,
+                separator
+            ).toInt();
+
+
+        int angle =
+            cmd.substring(
+                separator + 1
+            ).toInt();
+
+
+        // ---------------- GRIPPER ----------------
+
+        if(servoNumber == 1){
+
+            gripperTarget =
+                constrain(
+                    angle,
+                    GRIPPER_MIN,
+                    GRIPPER_MAX
+                );
+        }
+
+
+        // ---------------- ELBOW ----------------
+
+        else if(servoNumber == 2){
+
+            elbowTarget =
+                constrain(
+                    angle,
+                    ELBOW_MIN,
+                    ELBOW_MAX
+                );
+        }
+
+
+        // ---------------- SHOULDER ----------------
+
+        else if(servoNumber == 3){
+
+            shoulderTarget =
+                constrain(
+                    angle,
+                    SHOULDER_MIN,
+                    SHOULDER_MAX
+                );
+        }
+    }
+
+
+    // =================================================
+    // METAL DETECTOR
+    // =================================================
+
+    else if(cmd.startsWith("M")){
+
+        int state =
+            cmd.substring(1).toInt();
+
+        digitalWrite(
+            METAL_RELAY,
+            state ? HIGH : LOW
+        );
+    }
+
+
+    // =================================================
+    // CAMERA
+    // =================================================
+
+    else if(cmd.startsWith("C")){
+
+        int state =
+            cmd.substring(1).toInt();
+
+        digitalWrite(
+            CAMERA_RELAY,
+            state ? HIGH : LOW
+        );
+    }
+
+
+    server.send(
+        200,
+        "text/plain",
+        "OK"
+    );
+}
+
+
+// =====================================================
+// SETUP
+// =====================================================
+
+void setup(){
+
+    Serial.begin(115200);
+
+    delay(500);
+
+
+    // =================================================
+    // MOTOR
+    // =================================================
+
+    pinMode(
+        LEFT_RPWM,
+        OUTPUT
+    );
+
+    pinMode(
+        LEFT_LPWM,
+        OUTPUT
+    );
+
+    pinMode(
+        RIGHT_RPWM,
+        OUTPUT
+    );
+
+    pinMode(
+        RIGHT_LPWM,
+        OUTPUT
+    );
+
+    Stop();
+
+
+    // =================================================
+    // RELAY
+    // =================================================
+
+    pinMode(
+        METAL_RELAY,
+        OUTPUT
+    );
+
+    pinMode(
+        CAMERA_RELAY,
+        OUTPUT
+    );
+
+
+    digitalWrite(
+        METAL_RELAY,
+        LOW
+    );
+
+    digitalWrite(
+        CAMERA_RELAY,
+        LOW
+    );
+
+
+    // =================================================
+    // SERVO
+    // =================================================
+
+    gripper.setPeriodHertz(50);
+    elbow.setPeriodHertz(50);
+    shoulder.setPeriodHertz(50);
+
+
+    gripper.attach(
+        GRIPPER_PIN,
+        500,
+        2400
+    );
+
+
+    elbow.attach(
+        ELBOW_PIN,
+        500,
+        2400
+    );
+
+
+    shoulder.attach(
+        SHOULDER_PIN,
+        500,
+        2400
+    );
+
+
+    // Initial positions
+
+    gripper.write(
+        GRIPPER_MIN
+    );
+
+    elbow.write(
+        ELBOW_MIN
+    );
+
+    shoulder.write(
+        SHOULDER_MIN
+    );
+
+
+    // =================================================
+    // WIFI AP
+    // =================================================
+
+    WiFi.mode(
+        WIFI_AP
+    );
+
+
+    WiFi.softAP(
+        AP_SSID,
+        AP_PASSWORD
+    );
+
+
+    // =================================================
+    // WEB SERVER
+    // =================================================
+
+    server.on(
+        "/",
+        [](){
+
+            server.send_P(
+                200,
+                "text/html",
+                MAIN_page
+            );
+
+        }
+    );
+
+
+    server.on(
+        "/cmd",
+        handleCommand
+    );
+
+
+    server.begin();
+
+
+    // =================================================
+    // SERIAL
+    // =================================================
+
+    Serial.println();
+    Serial.println(
+        "================================"
+    );
+
+    Serial.println(
+        "        MRV-46 ROBOT"
+    );
+
+    Serial.println(
+        "================================"
+    );
+
+    Serial.print(
+        "WiFi SSID: "
+    );
+
+    Serial.println(
+        AP_SSID
+    );
+
+    Serial.print(
+        "Password: "
+    );
+
+    Serial.println(
+        AP_PASSWORD
+    );
+
+    Serial.print(
+        "IP Address: "
+    );
+
+    Serial.println(
+        WiFi.softAPIP()
+    );
+
+    Serial.println(
+        "Web Server Started"
+    );
+}
+
+
+// =====================================================
+// LOOP
+// =====================================================
+
+void loop(){
+
+    server.handleClient();
+
+    // Smooth servo movement
+    updateServos();
+
+    delay(8);
+}
