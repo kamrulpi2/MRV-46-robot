@@ -4,8 +4,9 @@
 > ESP32-based Wi-Fi controlled robotic vehicle with BTS7960 motor control, robotic arm, metal detector and camera control.
 > 
 
-<img width="2550" height="1664" alt="Gemini_Generated_Image_gtk8pxgtk8pxgtk8" src="https://github.com/user-attachments/assets/1b59bf8a-cfe1-4753-bb54-4ba83649946c" />
 <img width="1448" height="1086" alt="WhatsApp Image 2026-10-12 at 12 58 53 PM (1)" src="https://github.com/user-attachments/assets/6059652e-c47f-4cd7-9fc9-df39468a5d92" />
+<img width="2550" height="1664" alt="Gemini_Generated_Image_gtk8pxgtk8pxgtk8" src="https://github.com/user-attachments/assets/1b59bf8a-cfe1-4753-bb54-4ba83649946c" />
+
 <img width="576" height="1280" alt="6244385585552364371" src="https://github.com/user-attachments/assets/0fee24ec-7e42-405e-a7a3-ac82d13e90bb" />
 
 
